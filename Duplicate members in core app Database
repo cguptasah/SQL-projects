@@ -1,0 +1,294 @@
+-- table/database names has been changed to be most generic out there.
+-- below is a script that I prepared to pull a report of duplicate members that can exist in healthcare core applications. 
+-- the combinatioin or approach to identify duplicate members could be many and below are the some of the approach that is listed out.
+
+
+---first block of query is to get the dump of data that is needed for analysis in to temp table. this will prevent hitting the prod tables multiple times.
+
+Use Database
+
+DROP TABLE IF EXISTS #temp_test
+
+SELECT DISTINCT
+m.MemberID
+,m.MBI
+,m.Socialsecuritynumber
+,m.FirstName
+,m.Lastname
+,CONVERT(VARCHAR(8),m.DateofBirth,112) AS DOB
+,mc.MemberNumber
+,mc.Policynumber
+,gp.GroupName
+,gp.GroupNumber
+,bp.PlanName
+,bc.EffectiveDate
+,bc.ExpirationDate
+INTO #temp_test
+FROM [dbo].[Membercoverages] mc WITH (NOLOCK)
+JOIN [dbo].[SubscriberContracts] sc with(nolock)
+	ON sc.SubscriberContractID = mc.SubscriberContractId
+JOIN [dbo].[Members] m WITH (NOLOCK)
+	ON m.Memberid = mc.Memberid
+JOIN [dbo].[Groups] gp with(nolock)
+	ON gp.groupid = sc.GroupId
+JOIN [dbo].[BasePlans] bp with(nolock)
+	ON bp.PlanID = mc.BasePlanID
+JOIN [dbo].[Benefitcoverages] bc WITH (NOLOCK)
+	ON bc.EntityId = mc.MemberCoverageID
+	AND bc.CoverageEntityType ='BAS'
+	AND bc.EntityTypeId = '3'
+	AND BC.Effectivedate <> bc.Expirationdate
+	--AND bc.Effectivedate <= EOMONTH(GETDATE())
+	--AND bc.Expirationdate >= EOMONTH(GETDATE())
+WHERE 1=1
+AND mc.MemberNumber <> '111111111'
+AND gp.GroupNumber not in ('excluded groups')
+
+
+
+------Below scripts, is using the temp table created above to analyze Duplicate Members as per SSN, FN, LN & DOBs and have Two different CINs-------
+
+SELECT n.Socialsecuritynumber
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.MemberNumber
+,n.GroupNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.Socialsecuritynumber
+	,m.FirstName
+	,m.Lastname
+	,m.DOB
+	,COUNT(DISTINCT Policynumber) as CIN_Count
+	FROM #temp_test m
+	WHERE m.Policynumber NOT IN ('N/A', 'NA')
+	GROUP BY m.Socialsecuritynumber
+	,m.FirstName
+	,m.Lastname
+	,m.DOB
+	HAVING COUNT(DISTINCT Policynumber) > 1
+	) o
+ON n.Socialsecuritynumber = o.Socialsecuritynumber
+AND n.FirstName = o.FirstName
+AND n.Lastname = o.Lastname
+AND n.DOB = o.DOB
+ORDER BY n.Socialsecuritynumber, n.Firstname
+
+
+---------Use the temp table created above to analyze duplicate Members as per SSN, FN, LN & DOBs and Two different membernumber--------
+
+
+SELECT n.Socialsecuritynumber
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.MemberNumber
+,n.GroupNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.Socialsecuritynumber
+	,m.FirstName
+	,m.Lastname
+	,m.DOB
+	,COUNT(DISTINCT m.Membernumber) as Membernumber_Count
+	FROM #temp_test m
+	GROUP BY m.Socialsecuritynumber
+	,m.FirstName
+	,m.Lastname
+	,m.DOB
+	HAVING COUNT(DISTINCT m.Membernumber) > 1
+	) o
+ON n.Socialsecuritynumber = o.Socialsecuritynumber
+AND n.FirstName = o.FirstName
+AND n.Lastname = o.Lastname
+AND n.DOB = o.DOB
+AND right(n.MemberNumber, 2)= '00' --exclude the member number not ending in '00'
+ORDER BY n.Socialsecuritynumber, n.Firstname
+
+
+
+---------Duplicate Members as per SSN, FN, LN, DOBs, GroupNumber and have Two different Membernumber --------
+
+SELECT n.Socialsecuritynumber
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.GroupNumber
+,n.MemberNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.Socialsecuritynumber
+	,m.FirstName
+	,m.Lastname
+	,m.DOB
+	,m.Groupnumber
+	,COUNT(DISTINCT m.Membernumber) as CIN_Count
+	FROM #temp_test m
+	--WHERE m.GroupNumber <> 'H5355'
+	GROUP BY m.Socialsecuritynumber
+	,m.FirstName
+	,m.Lastname
+	,m.DOB
+	,m.GroupNumber
+	HAVING COUNT(DISTINCT m.Membernumber) > 1
+	) o
+		ON n.Socialsecuritynumber = o.Socialsecuritynumber
+		AND n.FirstName = o.FirstName
+		AND n.Lastname = o.Lastname
+		AND n.DOB = o.DOB
+		AND n.Groupnumber = o.Groupnumber
+WHERE 1=1
+ORDER BY n.Socialsecuritynumber, n.Firstname, n.LastName
+
+
+---------Duplicate Members as per SSN, FN, LN, DOBs, GroupNumber and have Two different policynumber --------
+
+SELECT n.Socialsecuritynumber
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.GroupNumber
+,n.MemberNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.Socialsecuritynumber
+		,m.FirstName
+		,m.Lastname
+		,m.DOB
+		,m.Groupnumber
+		,COUNT(DISTINCT m.Policynumber) as CIN_Count
+	FROM #temp_test m
+	--WHERE m.GroupNumber <> 'H5355'
+	GROUP BY m.Socialsecuritynumber
+		,m.FirstName
+		,m.Lastname
+		,m.DOB
+		,m.GroupNumber
+	HAVING COUNT(DISTINCT m.Policynumber) > 1
+	) o
+		ON n.Socialsecuritynumber = o.Socialsecuritynumber
+		AND n.FirstName = o.FirstName
+		AND n.Lastname = o.Lastname
+		AND n.DOB = o.DOB
+		AND n.Groupnumber = o.Groupnumber
+WHERE 1=1
+ORDER BY n.Socialsecuritynumber, n.Firstname, n.LastName, n.DOB
+
+
+
+---------Duplicate Members as per SSN, FN, LN, DOBs having two GroupNumber (either same or different) and have Two different Policynumber --------
+
+SELECT n.Socialsecuritynumber
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.GroupNumber
+,n.MemberNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.Socialsecuritynumber
+		,m.FirstName
+		,m.Lastname
+		,m.DOB
+		,COUNT(m.Groupnumber) AS GroupNumber_Count
+		,COUNT(DISTINCT m.Policynumber) as CIN_Count
+	FROM #temp_test m
+	WHERE m.Policynumber NOT IN ('N/A', 'NA')
+	GROUP BY m.Socialsecuritynumber
+		,m.FirstName
+		,m.Lastname
+		,m.DOB
+	HAVING COUNT(DISTINCT m.Policynumber) > 1
+	AND COUNT(m.GroupNumber) > 1
+	) o
+	ON n.Socialsecuritynumber = o.Socialsecuritynumber
+	AND n.FirstName = o.FirstName
+	AND n.Lastname = o.Lastname
+	AND n.DOB = o.DOB
+	-- AND right(n.MemberNumber, 2)= '00' -- Loy 05/15/2020 excluded member number not ending in '00'
+WHERE 1=1
+ORDER BY n.Socialsecuritynumber, n.Firstname, n.LastName, n.DOB
+
+
+
+---------Duplicate Members as per SSN, FN, LN, DOBs having two GroupNumber (either same or different) and have Two different Membernumber --------
+
+SELECT n.Socialsecuritynumber
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.GroupNumber
+,n.MemberNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.Socialsecuritynumber
+		,m.FirstName
+		,m.Lastname
+		,m.DOB
+		,COUNT(m.Groupnumber) AS GroupNumber_Count
+		,COUNT(DISTINCT m.membernumber) as CIN_Count
+	FROM #temp_test m
+	WHERE m.Policynumber NOT IN ('N/A', 'NA')
+	GROUP BY m.Socialsecuritynumber
+		,m.FirstName
+		,m.Lastname
+		,m.DOB
+	HAVING COUNT(DISTINCT m.membernumber) > 1
+	AND COUNT(m.GroupNumber) > 1
+	) o
+		ON n.Socialsecuritynumber = o.Socialsecuritynumber
+		AND n.FirstName = o.FirstName
+		AND n.Lastname = o.Lastname
+		AND n.DOB = o.DOB
+WHERE 1=1
+ORDER BY n.Socialsecuritynumber, n.Firstname, n.LastName, n.DOB
+
+
+
+---------Duplicate Members as per MBI, LN & DOBs and Two different membernumber--------
+
+
+SELECT n.MBI
+,n.FirstName
+,n.Lastname
+,n.DOB
+,n.Policynumber
+,n.MemberNumber
+,n.GroupNumber
+,n.EffectiveDate
+,n.ExpirationDate
+FROM #temp_test n
+JOIN (
+	SELECT m.MBI
+		,m.Lastname
+		,m.DOB
+		,COUNT(DISTINCT m.Membernumber) as Membernumber_Count
+	FROM #temp_test m
+	GROUP BY m.MBI
+		,m.Lastname
+		,m.DOB
+	HAVING COUNT(DISTINCT m.Membernumber) > 1
+	) o
+		ON n.MBI = o.MBI
+		AND n.Lastname = o.Lastname
+		AND n.DOB = o.DOB
+ORDER BY n.MBI
